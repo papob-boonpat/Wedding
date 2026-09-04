@@ -8,9 +8,7 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  experimental: {
-    allowedDevOrigins: ["192.168.*.*", "10.*.*.*", "localhost", "127.0.0.1"],
-  },
+  allowedDevOrigins: ["192.168.*.*", "10.*.*.*", "localhost", "127.0.0.1"],
   async rewrites() {
     // Helpful for local development proxying to backend on port 5000
     const backendUrl =

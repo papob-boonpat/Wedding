@@ -1,13 +1,13 @@
 import Canvas from '@/components/Canvas';
 
 export const metadata = {
-  title: 'Guestbook | Draw Your Wishes',
-  description: 'Draw your wedding wishes and watch them float into the balloon bouquet in real-time.',
+  title: 'สมุดอวยพร | วาดและส่งคำอวยพร',
+  description: 'ร่วมเขียนคำอวยพรแสดงความยินดีแด่คู่บ่าวสาวในวันสำคัญ',
 };
 
 export default function GuestPage() {
   return (
-    <main className="fixed inset-0 w-full h-full overflow-hidden bg-slate-950">
+    <main className="fixed inset-0 w-full h-full overflow-hidden bg-[#faf8f5]">
       <Canvas />
     </main>
   );

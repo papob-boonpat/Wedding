@@ -23,8 +23,8 @@ body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  background-color: #0f172a;
-  color: #f8fafc;
+  background-color: #faf7f2;
+  color: #1e293b;
   user-select: none;
   -webkit-user-select: none;
 }

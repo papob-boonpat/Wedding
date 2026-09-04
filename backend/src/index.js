@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const { initDB } = require("./config/db");
+const { initMinio } = require("./config/minio");
 const setupSocketIO = require("./sockets");
 const wishesRouter = require("./routes/wishes");
 
@@ -51,6 +52,7 @@ const PORT = process.env.PORT || 3100;
 async function startServer() {
   try {
     await initDB();
+    await initMinio();
     server.listen(PORT, "0.0.0.0", () => {
       console.log(`=========================================`);
       console.log(` Wedding Backend running on port: ${PORT}`);

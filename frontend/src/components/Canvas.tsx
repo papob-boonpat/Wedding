@@ -7,9 +7,9 @@ import {
   RotateCcw,
   Send,
   Sparkles,
-  Palette,
   CheckCircle2,
   Brush,
+  PenTool,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getBackendUrl } from '@/lib/socket';
@@ -26,20 +26,22 @@ interface Stroke {
   size: number;
 }
 
-const BALLOON_COLORS = [
-  { name: 'Rose Red', hex: '#f43f5e', bg: 'bg-rose-500' },
-  { name: 'Warm Gold', hex: '#eab308', bg: 'bg-yellow-500' },
-  { name: 'Sky Blue', hex: '#38bdf8', bg: 'bg-sky-400' },
-  { name: 'Royal Purple', hex: '#a855f7', bg: 'bg-purple-500' },
-  { name: 'Emerald Mint', hex: '#10b981', bg: 'bg-emerald-500' },
-  { name: 'Champagne Coral', hex: '#fb923c', bg: 'bg-orange-400' },
-  { name: 'Soft Lavender', hex: '#c084fc', bg: 'bg-purple-400' },
+const CANVAS_BG_COLOR = '#faf8f5';
+
+const CAPSULE_COLORS = [
+  { name: 'ชมพูกุหลาบ', hex: '#e11d48', bg: 'bg-rose-600' },
+  { name: 'ทองอบอุ่น', hex: '#d97706', bg: 'bg-amber-600' },
+  { name: 'ฟ้าสดใส', hex: '#0284c7', bg: 'bg-sky-600' },
+  { name: 'ม่วงรอยัล', hex: '#7c3aed', bg: 'bg-purple-600' },
+  { name: 'เขียวมรกต', hex: '#059669', bg: 'bg-emerald-600' },
+  { name: 'ส้มซันเซ็ต', hex: '#ea580c', bg: 'bg-orange-600' },
+  { name: 'ชมพูเบอร์รี่', hex: '#db2777', bg: 'bg-pink-600' },
 ];
 
 const PEN_SIZES = [
-  { label: 'Fine', value: 3 },
-  { label: 'Medium', value: 6 },
-  { label: 'Bold', value: 12 },
+  { label: 'เส้นเล็ก', value: 3 },
+  { label: 'ปานกลาง', value: 6 },
+  { label: 'เส้นใหญ่', value: 12 },
 ];
 
 export default function Canvas() {
@@ -48,16 +50,19 @@ export default function Canvas() {
   const currentStrokeRef = useRef<Point[]>([]);
   const strokesRef = useRef<Stroke[]>([]);
 
-  // State
-  const [selectedColor, setSelectedColor] = useState<string>(BALLOON_COLORS[0].hex);
+  // State: Random initial color so every new wish gets a delightful varied palette
+  const [selectedColor, setSelectedColor] = useState<string>(() => {
+    return CAPSULE_COLORS[Math.floor(Math.random() * CAPSULE_COLORS.length)].hex;
+  });
   const [selectedSize, setSelectedSize] = useState<number>(6);
   const [isEraser, setIsEraser] = useState<boolean>(false);
   const [hasContent, setHasContent] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [guestName, setGuestName] = useState<string>('');
+  // const [touchRejectedNotice, setTouchRejectedNotice] = useState<boolean>(false);
 
   // Morphing animation state
-  const [animatingSnapshot, setAnimatingSnapshot] = useState<string | null>(null);
+  const [animatingSnapshot, setAnimatingSnapshot] = useState<{ image: string; color: string } | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState<boolean>(false);
 
   const lastPointRef = useRef<Point | null>(null);
@@ -148,8 +153,15 @@ export default function Canvas() {
     }
   };
 
-  // Pointer Event Handlers (Stylus + Touch + Mouse)
+  // Pointer Event Handlers (Stylus + Mouse Only, Reject Finger Touch)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Palm Rejection: Strictly reject finger touch
+    if (e.pointerType === 'touch') {
+      // setTouchRejectedNotice(true);
+      // setTimeout(() => setTouchRejectedNotice(false), 2500);
+      return;
+    }
+
     if (!e.isPrimary) return;
 
     const canvas = canvasRef.current;
@@ -174,7 +186,7 @@ export default function Canvas() {
       const currentWidth = isEraser ? selectedSize * 4 : selectedSize;
       ctx.beginPath();
       ctx.arc(x, y, currentWidth / 2, 0, Math.PI * 2);
-      ctx.fillStyle = isEraser ? '#0b0f19' : selectedColor;
+      ctx.fillStyle = isEraser ? CANVAS_BG_COLOR : selectedColor;
       ctx.fill();
       ctx.restore();
     }
@@ -183,6 +195,7 @@ export default function Canvas() {
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'touch') return;
     if (!isDrawingRef.current || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
@@ -190,7 +203,6 @@ export default function Canvas() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Use coalesced events to capture all high-rate stylus points (Apple Pencil 120Hz/240Hz)
     const nativeEvent = e.nativeEvent as any;
     const events: PointerEvent[] =
       typeof nativeEvent.getCoalescedEvents === 'function'
@@ -198,12 +210,13 @@ export default function Canvas() {
         : [e.nativeEvent];
 
     ctx.save();
-    ctx.strokeStyle = isEraser ? '#0b0f19' : selectedColor;
+    ctx.strokeStyle = isEraser ? CANVAS_BG_COLOR : selectedColor;
     ctx.lineWidth = isEraser ? selectedSize * 4 : selectedSize;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
     for (const ev of events) {
+      if (ev.pointerType === 'touch') continue;
       const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
       const pressure = ev.pressure && ev.pressure > 0 ? ev.pressure : 0.5;
@@ -232,6 +245,7 @@ export default function Canvas() {
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'touch') return;
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
 
@@ -244,7 +258,7 @@ export default function Canvas() {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.save();
-        ctx.strokeStyle = isEraser ? '#0b0f19' : selectedColor;
+        ctx.strokeStyle = isEraser ? CANVAS_BG_COLOR : selectedColor;
         ctx.lineWidth = isEraser ? selectedSize * 4 : selectedSize;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -259,7 +273,7 @@ export default function Canvas() {
     if (currentStrokeRef.current.length > 0) {
       strokesRef.current.push({
         points: [...currentStrokeRef.current],
-        color: isEraser ? '#0b0f19' : selectedColor,
+        color: isEraser ? CANVAS_BG_COLOR : selectedColor,
         size: isEraser ? selectedSize * 4 : selectedSize,
       });
       currentStrokeRef.current = [];
@@ -299,7 +313,7 @@ export default function Canvas() {
     }
   };
 
-  // Submit and morph into balloon with instant snappy launch
+  // Submit and morph into capsule ball with instant snappy launch
   const handleSubmit = async () => {
     const canvas = canvasRef.current;
     if (!canvas || !hasContent || isSubmitting) return;
@@ -307,7 +321,7 @@ export default function Canvas() {
     try {
       setIsSubmitting(true);
 
-      // 1. Create an optimized snapshot (scaled to crisp 1000px max dimension for fast ~10ms encoding)
+      // 1. Create an optimized snapshot (warm ivory background)
       const maxDim = 1000;
       let targetW = canvas.width;
       let targetH = canvas.height;
@@ -324,57 +338,44 @@ export default function Canvas() {
       const expCtx = exportCanvas.getContext('2d');
 
       if (expCtx) {
-        // Dark background with subtle gradient
-        const bgGrad = expCtx.createRadialGradient(
-          targetW / 2,
-          targetH / 2,
-          50,
-          targetW / 2,
-          targetH / 2,
-          targetW / 2
-        );
-        bgGrad.addColorStop(0, '#1e293b');
-        bgGrad.addColorStop(1, '#0f172a');
-        expCtx.fillStyle = bgGrad;
+        // Light warm ivory background
+        expCtx.fillStyle = '#faf8f5';
         expCtx.fillRect(0, 0, targetW, targetH);
 
         // Draw guest drawing onto composite
         expCtx.drawImage(canvas, 0, 0, targetW, targetH);
 
-        // Guest name tag
+        // Guest name tag in elegant dark charcoal
         if (guestName.trim()) {
-          expCtx.font = `${Math.round(20 * (targetW / 800))}px serif`;
-          expCtx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+          expCtx.font = `600 ${Math.round(20 * (targetW / 800))}px serif`;
+          expCtx.fillStyle = 'rgba(51, 65, 85, 0.85)';
           expCtx.textAlign = 'right';
-          expCtx.fillText(`— ${guestName.trim()}`, targetW - 24, targetH - 24);
+          expCtx.fillText(`— ${guestName.trim()}`, targetW - 28, targetH - 28);
         }
       }
 
-      // Fast encoding: webp is ~10x faster and lighter than PNG
+      // Fast encoding
       let base64Data = exportCanvas.toDataURL('image/webp', 0.85);
       if (!base64Data.startsWith('data:image/webp')) {
         base64Data = exportCanvas.toDataURL('image/png');
       }
 
-      // Quick confetti pop
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.85 },
-        colors: ['#f43f5e', '#eab308', '#38bdf8', '#fb7185'],
-      });
-
-      // 2. Start fast balloon morph animation immediately
-      setAnimatingSnapshot(base64Data);
-
-      // Instantly clear the underlying canvas so there's zero UI lag
-      handleClear();
-      const currentGuestName = guestName.trim() || 'Guest';
+      const currentGuestName = guestName.trim() || 'ผู้ร่วมงาน';
       const currentColor = selectedColor;
+
+      // 2. Start fast capsule morph animation with current wish color
+      setAnimatingSnapshot({ image: base64Data, color: currentColor });
+
+      // Clear underlying canvas and reset guest name
+      handleClear();
       setGuestName('');
       setIsEraser(false);
 
-      // 3. Parallelize network send with animation
+      // 3. Wait until the capsule finishes packing and starts shooting upward (~950ms)
+      const launchDelay = 950;
+      await new Promise((res) => setTimeout(res, launchDelay));
+
+      // Send request at the exact moment the capsule shoots upward
       const backendUrl = getBackendUrl();
       const uploadPromise = fetch(`${backendUrl}/api/wishes`, {
         method: 'POST',
@@ -386,20 +387,31 @@ export default function Canvas() {
         }),
       });
 
-      // Smooth 1.5s launch animation timer
-      const animationTimer = new Promise((res) => setTimeout(res, 1500));
+      // Wait for remaining upward flight animation (~650ms) and upload response
+      const remainingFlight = new Promise((res) => setTimeout(res, 650));
+      await Promise.all([uploadPromise, remainingFlight]);
 
-      await Promise.all([uploadPromise, animationTimer]);
-
+      // 4. Clean up animation, show success toast, and apply new random color AFTER ball is sent
       setAnimatingSnapshot(null);
       setShowSuccessToast(true);
+
+      confetti({
+        particleCount: 40,
+        spread: 60,
+        origin: { y: 0.7 },
+        colors: [currentColor, '#f43f5e', '#eab308', '#38bdf8'],
+      });
+
+      const remainingColors = CAPSULE_COLORS.filter((c) => c.hex !== currentColor);
+      const nextRandomColor = remainingColors[Math.floor(Math.random() * remainingColors.length)].hex;
+      setSelectedColor(nextRandomColor);
 
       setTimeout(() => {
         setShowSuccessToast(false);
       }, 2500);
     } catch (err) {
       console.error('Submission error:', err);
-      alert('Could not submit wish. Please check your connection.');
+      alert('ไม่สามารถส่งคำอวยพรได้ กรุณาตรวจสอบการเชื่อมต่อเครือข่าย');
       setAnimatingSnapshot(null);
     } finally {
       setIsSubmitting(false);
@@ -407,30 +419,30 @@ export default function Canvas() {
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-slate-950 select-none overflow-hidden touch-none canvas-container">
-      {/* Top Header & Toolbar */}
-      <header className="relative z-20 flex items-center justify-between px-6 py-3 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-500 to-amber-400 flex items-center justify-center shadow-lg shadow-rose-500/20">
+    <div className="relative w-full h-full flex flex-col bg-[#faf8f5] select-none overflow-hidden touch-none canvas-container">
+      {/* Top Header & Toolbar (Light Theme) */}
+      <header className="relative z-20 flex items-center justify-between px-6 py-3.5 bg-white/90 backdrop-blur-md border-b border-rose-100 shadow-sm">
+        {/* <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-500 to-amber-400 flex items-center justify-center shadow-md shadow-rose-300/40">
             <Sparkles className="w-5 h-5 text-white animate-pulse" />
           </div>
           <div>
-            <h1 className="text-xl font-bold font-serif tracking-wide bg-gradient-to-r from-rose-200 via-amber-100 to-rose-300 bg-clip-text text-transparent">
-              Wedding Guestbook
+            <h1 className="text-xl font-bold font-serif tracking-wide bg-gradient-to-r from-rose-900 via-rose-700 to-amber-700 bg-clip-text text-transparent">
+              สมุดอวยพรแต่งงาน
             </h1>
-            <p className="text-xs text-slate-400">Draw your warm wish with stylus or finger</p>
+            <p className="text-xs text-slate-500">เขียนหรือวาดคำอวยพรด้วย Apple Pencil หรือ ปากกา Stylus</p>
           </div>
-        </div>
+        </div> */}
 
         {/* Guest Name Input */}
         <div className="flex items-center gap-2">
           <input
             type="text"
-            placeholder="Your name (optional)"
+            placeholder="ชื่อของคุณ (ระบุหรือไม่ก็ได้)"
             value={guestName}
             onChange={(e) => setGuestName(e.target.value)}
             disabled={isSubmitting}
-            className="px-4 py-2 text-sm bg-slate-800/90 text-slate-100 placeholder-slate-500 rounded-full border border-slate-700 focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400 transition-all w-44 md:w-56"
+            className="px-4 py-2 text-sm bg-slate-50 text-slate-800 placeholder-slate-400 rounded-full border border-slate-200 focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400 transition-all w-44 md:w-56 shadow-sm"
           />
         </div>
 
@@ -439,49 +451,49 @@ export default function Canvas() {
           <button
             onClick={handleUndo}
             disabled={!hasContent || isSubmitting}
-            title="Undo"
-            className="p-2.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-all active:scale-95 border border-slate-700/60"
+            title="เลิกทำ"
+            className="p-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-40 disabled:pointer-events-none transition-all active:scale-95 border border-slate-200 shadow-sm"
           >
-            <RotateCcw className="w-5 h-5" />
+            <RotateCcw className="w-4 h-4" />
           </button>
 
           <button
             onClick={handleClear}
             disabled={!hasContent || isSubmitting}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-slate-800/90 hover:bg-red-950/40 text-slate-300 hover:text-red-300 disabled:opacity-40 disabled:pointer-events-none border border-slate-700/60 transition-all active:scale-95 text-sm font-medium"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 disabled:opacity-40 disabled:pointer-events-none border border-slate-200 shadow-sm transition-all active:scale-95 text-sm font-medium"
           >
-            <Eraser className="w-4 h-4 text-red-400" />
-            <span>Clear</span>
+            <Eraser className="w-4 h-4 text-rose-500" />
+            <span>ล้างหน้าจอ</span>
           </button>
 
           <button
             onClick={handleSubmit}
             disabled={!hasContent || isSubmitting}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-400 hover:to-pink-500 text-white font-semibold text-sm shadow-lg shadow-rose-500/30 disabled:opacity-40 disabled:pointer-events-none transition-all transform active:scale-95"
+            className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-semibold text-sm shadow-md shadow-rose-500/30 disabled:opacity-40 disabled:pointer-events-none transition-all transform active:scale-95"
           >
             {isSubmitting ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>Launching...</span>
+                <span>กำลังส่ง...</span>
               </>
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>Send Wish</span>
+                <span>ส่งคำอวยพร</span>
               </>
             )}
           </button>
         </div>
       </header>
 
-      {/* Main Drawing Area */}
-      <main className="relative flex-1 w-full h-full bg-[#0b0f19] overflow-hidden">
-        {/* Subtle grid guidelines */}
+      {/* Main Drawing Paper Area */}
+      <main className="relative flex-1 w-full h-full bg-[#faf8f5] overflow-hidden">
+        {/* Subtle romantic paper grid guideline dots */}
         <div
-          className="absolute inset-0 pointer-events-none opacity-10"
+          className="absolute inset-0 pointer-events-none opacity-20"
           style={{
             backgroundImage:
-              'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.4) 1px, transparent 0)',
+              'radial-gradient(circle at 1px 1px, rgba(225, 29, 72, 0.4) 1px, transparent 0)',
             backgroundSize: '32px 32px',
           }}
         />
@@ -498,98 +510,215 @@ export default function Canvas() {
 
         {/* Empty Placeholder Helper */}
         {!hasContent && !animatingSnapshot && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-0 text-slate-600 opacity-60">
-            <div className="p-6 rounded-full border border-dashed border-slate-700/60 mb-4 animate-bounce">
-              <Brush className="w-10 h-10 text-slate-500" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-0 text-slate-400 opacity-60">
+            <div className="p-6 rounded-full border border-dashed border-rose-200 mb-4 animate-bounce">
+              <Brush className="w-10 h-10 text-rose-400" />
             </div>
-            <p className="text-lg font-serif text-slate-400">Write or draw your blessings here</p>
-            <p className="text-xs text-slate-600 mt-1">Supports Apple Pencil & stylus pressure</p>
+            <p className="text-lg font-serif text-slate-600">เขียนหรือวาดคำอวยพรของคุณที่นี่</p>
+            {/* <p className="text-xs text-rose-500 font-medium mt-1">
+              ✍️ รองรับเฉพาะ Apple Pencil & ปากกา Stylus • ป้องกันฝ่ามือสัมผัส
+            </p> */}
           </div>
         )}
 
-        {/* Morphing Balloon Submit Animation Overlay */}
+        {/* Touch Rejection Notice Toast */}
+        {/* <AnimatePresence>
+          {touchRejectedNotice && (
+            <motion.div
+              initial={{ opacity: 0, y: 15, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.95 }}
+              className="absolute top-6 left-1/2 transform -translate-x-1/2 z-40 flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-slate-900/90 backdrop-blur-md text-white text-xs font-medium shadow-2xl pointer-events-none border border-white/20"
+            >
+              <PenTool className="w-4 h-4 text-rose-400 animate-pulse" />
+              <span>โหมดปากกาทำงานอยู่ — กรุณาใช้ Apple Pencil หรือ ปากกา Stylus</span>
+            </motion.div>
+          )}
+        </AnimatePresence> */}
+
+        {/* Morphing & Launching 3D Gachapon Capsule Submit Animation */}
         <AnimatePresence>
           {animatingSnapshot && (
-            <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center">
-              {/* Balloon Container */}
+            <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center overflow-hidden">
               <motion.div
                 initial={{
                   scale: 1,
                   y: 0,
                   opacity: 1,
-                  borderRadius: '16px',
-                  boxShadow: '0 0 0 rgba(0,0,0,0)',
+                  rotate: 0,
                 }}
                 animate={{
-                  scale: [1, 0.5, 0.35],
-                  y: [0, -120, -1100],
-                  opacity: [1, 1, 0.8],
-                  borderRadius: [
-                    '16px',
-                    '50% 50% 50% 50% / 40% 40% 60% 60%',
-                    '50% 50% 50% 50% / 40% 40% 60% 60%',
-                  ],
-                  boxShadow: [
-                    '0 10px 30px rgba(0,0,0,0.5)',
-                    `0 20px 50px ${selectedColor}99`,
-                    `0 30px 80px ${selectedColor}ee`,
-                  ],
+                  scale: [1, 0.65, 0.45, 0.38],
+                  y: [0, -30, -100, -1200],
+                  opacity: [1, 1, 1, 0.9],
+                  rotate: [0, -3, 4, -8],
                 }}
                 transition={{
-                  duration: 1.5,
+                  duration: 1.55,
                   ease: [0.22, 1, 0.36, 1],
-                  times: [0, 0.35, 1],
+                  times: [0, 0.3, 0.58, 1],
                 }}
-                className="relative overflow-hidden border-4 border-white/60 bg-slate-900"
+                className="relative flex items-center justify-center"
                 style={{
-                  width: '80%',
-                  height: '75%',
-                  backgroundColor: selectedColor,
+                  width: '72vw',
+                  height: '72vw',
+                  maxWidth: '460px',
+                  maxHeight: '460px',
                 }}
               >
-                {/* Embedded preview of canvas snapshot */}
-                <img
-                  src={animatingSnapshot}
-                  alt="Wish Snapshot"
-                  className="w-full h-full object-contain p-4"
-                />
-
-                {/* Balloon string attached to bottom */}
-                <div
-                  className="absolute left-1/2 -bottom-16 w-0.5 h-16 bg-white/70 transform -translate-x-1/2"
-                  style={{
-                    boxShadow: '0 0 4px rgba(255,255,255,0.8)',
+                {/* 1. Initial Drawing Card that morphs into a folded note */}
+                <motion.div
+                  initial={{ opacity: 1, scale: 1, borderRadius: '24px' }}
+                  animate={{
+                    opacity: [1, 0.95, 0.9, 0.85],
+                    scale: [1, 0.55, 0.4, 0.38],
+                    y: [0, -15, -45, -45],
+                    borderRadius: ['24px', '16px', '12px', '12px'],
                   }}
+                  transition={{
+                    duration: 1.55,
+                    times: [0, 0.3, 0.58, 1],
+                    ease: 'easeInOut',
+                  }}
+                  className="absolute z-20 w-full h-full bg-[#fffdf7] border-4 border-white shadow-2xl overflow-hidden flex items-center justify-center p-3"
+                  style={{
+                    boxShadow: `0 15px 40px ${animatingSnapshot.color}55`,
+                  }}
+                >
+                  <img
+                    src={animatingSnapshot.image}
+                    alt="Wish Snapshot"
+                    className="w-full h-full object-contain"
+                  />
+                  {/* Miniature cute seal tag */}
+                  <div className="absolute bottom-2 right-4 px-2 py-0.5 rounded-full bg-rose-600 text-[10px] font-bold text-white shadow-md flex items-center gap-1 border border-amber-300">
+                    <span>💖</span>
+                    <span>คำอวยพร</span>
+                  </div>
+                </motion.div>
+
+                {/* 2. The 3D Gachapon Capsule Ball wrapping around it as it shrinks */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{
+                    opacity: [0, 1, 1, 1],
+                    scale: [0.8, 1, 1, 1],
+                  }}
+                  transition={{
+                    duration: 1.55,
+                    times: [0, 0.25, 0.58, 1],
+                  }}
+                  className="absolute z-10 w-full h-full rounded-full flex items-center justify-center overflow-hidden"
+                  style={{
+                    filter: `drop-shadow(0 20px 45px ${animatingSnapshot.color}88)`,
+                  }}
+                >
+                  {/* Outer Crisp Contour Stroke Ring */}
+                  <div className="absolute inset-0 rounded-full border-[4px] border-slate-900/35 z-30 pointer-events-none" />
+
+                  {/* TOP HEMISPHERE: Crystal Translucent Dome with color tint & gloss reflections */}
+                  <div
+                    className="absolute inset-x-0 top-0 h-1/2 rounded-t-full overflow-hidden z-25 pointer-events-none"
+                    style={{
+                      background: `linear-gradient(to bottom, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.55) 45%, ${animatingSnapshot.color}35 100%)`,
+                    }}
+                  >
+                    {/* Primary curved specular gloss highlight */}
+                    <div className="absolute top-5 left-9 w-32 h-16 rounded-full bg-white/90 blur-[0.5px] -rotate-45" />
+                    {/* Secondary rim reflex */}
+                    <div className="absolute top-10 right-8 w-14 h-7 rounded-full bg-white/65 blur-[0.5px] rotate-35" />
+                  </div>
+
+                  {/* BOTTOM HEMISPHERE: Vibrant 3D Shaded Colored Base */}
+                  <div
+                    className="absolute inset-x-0 bottom-0 h-1/2 rounded-b-full overflow-hidden z-10"
+                    style={{
+                      backgroundColor: animatingSnapshot.color,
+                    }}
+                  >
+                    {/* 3D Spherical shading */}
+                    <div
+                      className="w-full h-full"
+                      style={{
+                        background:
+                          'radial-gradient(circle at 40% 25%, rgba(255,255,255,0.45) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.28) 80%, rgba(0,0,0,0.52) 100%)',
+                      }}
+                    />
+                    {/* Bottom-edge soft rim reflex */}
+                    <div className="absolute bottom-3 inset-x-16 h-4 bg-white/30 rounded-full blur-[1px]" />
+                  </div>
+
+                  {/* CENTER SEAM: Metallic Gold Dividing Ring */}
+                  <div
+                    className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-8 z-25 flex items-center justify-center pointer-events-none"
+                    style={{
+                      background: 'linear-gradient(to right, #d97706, #fef08a, #f59e0b, #b45309)',
+                      borderRadius: '9999px',
+                      boxShadow: '0 3px 8px rgba(15, 23, 42, 0.4), inset 0 1px 2px rgba(255,255,255,0.8)',
+                      borderTop: '1.5px solid rgba(255,255,255,0.8)',
+                      borderBottom: '1.5px solid rgba(15, 23, 42, 0.4)',
+                    }}
+                  >
+                    <div className="w-full h-1 bg-amber-900/30" />
+                  </div>
+
+                  {/* CENTER SEAL CLASP: High-Contrast Gold Medallion with Heart */}
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: [0, 1.3, 1] }}
+                    transition={{ delay: 0.35, duration: 0.35, type: 'spring' }}
+                    className="absolute z-30 w-20 h-20 rounded-full bg-gradient-to-tr from-amber-600 via-amber-400 to-yellow-200 p-1 shadow-2xl flex items-center justify-center"
+                  >
+                    <div className="w-full h-full rounded-full bg-white flex flex-col items-center justify-center shadow-inner border border-amber-300">
+                      <span className="text-rose-500 text-2xl font-bold">♥</span>
+                      <span className="text-[10px] font-black text-slate-800 tracking-tighter uppercase -mt-1">
+                        WISH
+                      </span>
+                    </div>
+                  </motion.div>
+                </motion.div>
+
+                {/* Sparkling Upward Thrust Trail */}
+                <motion.div
+                  initial={{ opacity: 0, scaleY: 0 }}
+                  animate={{
+                    opacity: [0, 0, 0.8, 0],
+                    scaleY: [0, 0, 1.5, 2.2],
+                    y: [0, 0, 80, 180],
+                  }}
+                  transition={{
+                    duration: 1.55,
+                    times: [0, 0.45, 0.7, 1],
+                  }}
+                  className="absolute -bottom-16 w-20 h-40 bg-gradient-to-t from-transparent via-amber-300/60 to-rose-400/80 rounded-full blur-md z-0 pointer-events-none"
                 />
               </motion.div>
             </div>
           )}
         </AnimatePresence>
 
-        {/* Floating Tool Palette (Bottom Center) */}
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-4 px-5 py-3 rounded-full bg-slate-900/90 backdrop-blur-xl border border-slate-800 shadow-2xl">
+        {/* Floating Tool Palette (Bottom Center, Light Theme) */}
+        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-4 px-5 py-3 rounded-full bg-white/95 backdrop-blur-xl border border-rose-200/80 shadow-2xl">
           {/* Color Swatches */}
-          <div className="flex items-center gap-2">
-            {BALLOON_COLORS.map((col) => (
+          <div className="flex items-center gap-2.5">
+            {CAPSULE_COLORS.map((col) => (
               <button
                 key={col.hex}
                 onClick={() => {
                   setSelectedColor(col.hex);
                   setIsEraser(false);
                 }}
-                className={`relative w-8 h-8 rounded-full transition-transform active:scale-95 ${
-                  col.bg
-                } ${
-                  selectedColor === col.hex && !isEraser
-                    ? 'ring-4 ring-white/80 scale-110 shadow-lg'
-                    : 'hover:scale-105 opacity-80 hover:opacity-100'
-                }`}
+                className={`relative w-8 h-8 rounded-full transition-transform active:scale-95 shadow-sm ${col.bg
+                  } ${selectedColor === col.hex && !isEraser
+                    ? 'ring-4 ring-rose-400/50 scale-110 shadow-md'
+                    : 'hover:scale-105 opacity-85 hover:opacity-100'
+                  }`}
                 title={col.name}
               />
             ))}
           </div>
 
-          <div className="h-6 w-px bg-slate-700" />
+          <div className="h-6 w-px bg-slate-200" />
 
           {/* Stroke Sizes */}
           <div className="flex items-center gap-2">
@@ -600,28 +729,26 @@ export default function Canvas() {
                   setSelectedSize(size.value);
                   setIsEraser(false);
                 }}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  selectedSize === size.value && !isEraser
-                    ? 'bg-rose-500 text-white shadow-md'
-                    : 'bg-slate-800 text-slate-400 hover:text-white'
-                }`}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedSize === size.value && !isEraser
+                  ? 'bg-rose-500 text-white shadow-md'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                  }`}
               >
                 {size.label}
               </button>
             ))}
           </div>
 
-          <div className="h-6 w-px bg-slate-700" />
+          <div className="h-6 w-px bg-slate-200" />
 
           {/* Eraser Tool */}
           <button
             onClick={() => setIsEraser(!isEraser)}
-            className={`p-2 rounded-full transition-all ${
-              isEraser
-                ? 'bg-rose-500 text-white shadow-lg ring-2 ring-white/50'
-                : 'bg-slate-800 text-slate-400 hover:text-white'
-            }`}
-            title="Eraser"
+            className={`p-2 rounded-full transition-all ${isEraser
+              ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
+              : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+              }`}
+            title="ยางลบ"
           >
             <Eraser className="w-4 h-4" />
           </button>
@@ -635,10 +762,10 @@ export default function Canvas() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-20 left-1/2 transform -translate-x-1/2 z-40 flex items-center gap-3 px-6 py-3 rounded-full bg-emerald-500 text-white font-medium shadow-xl shadow-emerald-500/20"
+            className="absolute top-20 left-1/2 transform -translate-x-1/2 z-40 flex items-center gap-3 px-6 py-3 rounded-full bg-emerald-600 text-white font-medium shadow-xl shadow-emerald-600/20"
           >
             <CheckCircle2 className="w-5 h-5 text-white" />
-            <span>Wish launched as a balloon! Thank you!</span>
+            <span>ส่งคำอวยพรลงตู้กาชาปองเรียบร้อยแล้ว ขอบคุณมากครับ/ค่ะ! ✨</span>
           </motion.div>
         )}
       </AnimatePresence>
