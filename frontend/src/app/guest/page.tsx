@@ -1,4 +1,4 @@
-import Canvas from '@/components/Canvas';
+import GuestNameGate from '@/components/GuestNameGate';
 
 export const metadata = {
   title: 'สมุดอวยพร | วาดและส่งคำอวยพร',
@@ -8,7 +8,7 @@ export const metadata = {
 export default function GuestPage() {
   return (
     <main className="fixed inset-0 w-full h-full overflow-hidden bg-[#faf8f5]">
-      <Canvas />
+      <GuestNameGate />
     </main>
   );
 }

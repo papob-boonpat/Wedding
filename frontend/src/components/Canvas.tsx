@@ -44,7 +44,14 @@ const PEN_SIZES = [
   { label: 'เส้นใหญ่', value: 12 },
 ];
 
-export default function Canvas() {
+interface CanvasProps {
+  /** Name collected by the gate before this page is shown */
+  initialGuestName?: string;
+  /** Called once a wish has been sent, so the gate can ask the next guest for their name */
+  onFinished?: () => void;
+}
+
+export default function Canvas({ initialGuestName = '', onFinished }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDrawingRef = useRef(false);
   const currentStrokeRef = useRef<Point[]>([]);
@@ -58,7 +65,7 @@ export default function Canvas() {
   const [isEraser, setIsEraser] = useState<boolean>(false);
   const [hasContent, setHasContent] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [guestName, setGuestName] = useState<string>('');
+  const [guestName, setGuestName] = useState<string>(initialGuestName);
   // const [touchRejectedNotice, setTouchRejectedNotice] = useState<boolean>(false);
 
   // Morphing animation state
@@ -316,7 +323,7 @@ export default function Canvas() {
   // Submit and morph into capsule ball with instant snappy launch
   const handleSubmit = async () => {
     const canvas = canvasRef.current;
-    if (!canvas || !hasContent || isSubmitting) return;
+    if (!canvas || !hasContent || isSubmitting || !guestName.trim()) return;
 
     try {
       setIsSubmitting(true);
@@ -360,7 +367,7 @@ export default function Canvas() {
         base64Data = exportCanvas.toDataURL('image/png');
       }
 
-      const currentGuestName = guestName.trim() || 'ผู้ร่วมงาน';
+      const currentGuestName = guestName.trim();
       const currentColor = selectedColor;
 
       // 2. Start fast capsule morph animation with current wish color
@@ -408,6 +415,8 @@ export default function Canvas() {
 
       setTimeout(() => {
         setShowSuccessToast(false);
+        // Hand control back to the name gate for the next guest
+        onFinished?.();
       }, 2500);
     } catch (err) {
       console.error('Submission error:', err);
@@ -438,7 +447,7 @@ export default function Canvas() {
         <div className="flex items-center gap-2">
           <input
             type="text"
-            placeholder="ชื่อของคุณ (ระบุหรือไม่ก็ได้)"
+            placeholder="ชื่อของคุณ"
             value={guestName}
             onChange={(e) => setGuestName(e.target.value)}
             disabled={isSubmitting}
@@ -468,7 +477,7 @@ export default function Canvas() {
 
           <button
             onClick={handleSubmit}
-            disabled={!hasContent || isSubmitting}
+            disabled={!hasContent || isSubmitting || !guestName.trim()}
             className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-semibold text-sm shadow-md shadow-rose-500/30 disabled:opacity-40 disabled:pointer-events-none transition-all transform active:scale-95"
           >
             {isSubmitting ? (
