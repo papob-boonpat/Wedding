@@ -35,21 +35,23 @@ async function initDB(retries = 10, delay = 3000) {
       `);
 
       // Check if table is empty and seed initial welcome wishes
-      const countRes = await client.query('SELECT COUNT(*) FROM wishes;');
+      const countRes = await client.query("SELECT COUNT(*) FROM wishes;");
       if (parseInt(countRes.rows[0].count, 10) === 0) {
-        console.log('[DB] Fresh database detected. Seeding initial welcome blessings...');
-        
-        // Minimal elegant SVG data URIs for starter balloons
-        const sample1 = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" fill="%23fb7185" font-family="serif" font-size="24" font-weight="bold">Welcome to Our Wedding! ✨</text><text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" fill="%23cbd5e1" font-family="sans-serif" font-size="16">May love and joy fill this day ❤️</text></svg>`;
-        const sample2 = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" fill="%23f59e0b" font-family="serif" font-size="24" font-weight="bold">Forever & Always 💍</text><text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" fill="%23cbd5e1" font-family="sans-serif" font-size="16">Wishing you endless happiness!</text></svg>`;
-
-        await client.query(
-          `INSERT INTO wishes (image_data, color, guest_name) VALUES 
-            ($1, '#f43f5e', 'Bride & Groom'),
-            ($2, '#eab308', 'Wedding Party');`,
-          [sample1, sample2]
+        console.log(
+          "[DB] Fresh database detected. Seeding initial welcome blessings...",
         );
-        console.log('[DB] Successfully seeded 2 starter wishes.');
+
+        // Minimal elegant SVG data URIs for starter balloons
+        // const sample1 = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" fill="%23fb7185" font-family="serif" font-size="24" font-weight="bold">Welcome to Our Wedding! ✨</text><text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" fill="%23cbd5e1" font-family="sans-serif" font-size="16">May love and joy fill this day ❤️</text></svg>`;
+        // const sample2 = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect width="100%" height="100%" fill="%230f172a"/><text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" fill="%23f59e0b" font-family="serif" font-size="24" font-weight="bold">Forever & Always 💍</text><text x="50%" y="65%" dominant-baseline="middle" text-anchor="middle" fill="%23cbd5e1" font-family="sans-serif" font-size="16">Wishing you endless happiness!</text></svg>`;
+
+        // await client.query(
+        //   `INSERT INTO wishes (image_data, color, guest_name) VALUES
+        //     ($1, '#f43f5e', 'Bride & Groom'),
+        //     ($2, '#eab308', 'Wedding Party');`,
+        //   [sample1, sample2]
+        // );
+        console.log("[DB] Successfully seeded 2 starter wishes.");
       }
 
       client.release();

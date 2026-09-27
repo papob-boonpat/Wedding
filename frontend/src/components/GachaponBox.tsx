@@ -18,6 +18,15 @@ interface BallMeta {
   highlightAngle: number;
 }
 
+type DrawPhase = 'idle' | 'churn' | 'spotlight';
+
+interface DrawState {
+  phase: DrawPhase;
+  winnerKey: string | null;
+  highlightKey: string | null;
+  startedAt: number;
+}
+
 interface CapsuleSprite {
   canvas: HTMLCanvasElement;
   cx: number;
@@ -25,6 +34,13 @@ interface CapsuleSprite {
 }
 
 const spriteCache = new Map<string, CapsuleSprite>();
+
+// Lucky draw choreography (ms)
+const CHURN_MS = 2400;
+const SPOTLIGHT_MS = 2100;
+const SHAKE_INTERVAL_MS = 420;
+const HIGHLIGHT_CYCLE_MS = 90;
+const WINNER_RISE_MS = 900;
 
 function getCapsuleSprite(color: string, radius: number): CapsuleSprite {
   const key = `${color}_${radius}`;
@@ -183,9 +199,129 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
   const onSelectWishRef = useRef(onSelectWish);
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
+  // Lucky draw ("gacha pickup") state. The canvas render loop closes over its
+  // initial scope, so every value it needs lives in a ref, never in useState.
+  const drawStateRef = useRef<DrawState>({
+    phase: 'idle',
+    winnerKey: null,
+    highlightKey: null,
+    startedAt: 0,
+  });
+  const drawTimeoutsRef = useRef<number[]>([]);
+  const drawIntervalsRef = useRef<number[]>([]);
+  const [drawPhase, setDrawPhase] = useState<DrawPhase>('idle');
+  const [winnerWish, setWinnerWish] = useState<WishData | null>(null);
+
   useEffect(() => {
     onSelectWishRef.current = onSelectWish;
   }, [onSelectWish]);
+
+  // Stop any running draw and restore the engine to its idle state
+  const cancelDraw = useCallback(() => {
+    drawTimeoutsRef.current.forEach((t) => window.clearTimeout(t));
+    drawIntervalsRef.current.forEach((t) => window.clearInterval(t));
+    drawTimeoutsRef.current = [];
+    drawIntervalsRef.current = [];
+
+    const winnerKey = drawStateRef.current.winnerKey;
+    if (winnerKey) {
+      const entry = ballBodiesRef.current.get(winnerKey);
+      if (entry) {
+        entry.body.isSensor = false;
+        // Held motionless through the spotlight, the winner has fallen asleep by now
+        // and would hang in mid-air ignoring gravity. Wake it and drop it back home.
+        Matter.Sleeping.set(entry.body, false);
+        Matter.Body.setVelocity(entry.body, { x: (Math.random() - 0.5) * 1.5, y: 1.5 });
+        Matter.Body.setAngularVelocity(entry.body, (Math.random() - 0.5) * 0.12);
+      }
+    }
+
+    drawStateRef.current = { phase: 'idle', winnerKey: null, highlightKey: null, startedAt: 0 };
+  }, []);
+
+  // Turn the dial: shake the capsules, then spotlight one at random
+  const startLuckyDraw = useCallback(() => {
+    if (drawStateRef.current.phase !== 'idle') return;
+    if (ballBodiesRef.current.size === 0) return;
+
+    setWinnerWish(null);
+    drawStateRef.current = {
+      phase: 'churn',
+      winnerKey: null,
+      highlightKey: null,
+      startedAt: performance.now(),
+    };
+    setDrawPhase('churn');
+
+    // Sleeping bodies ignore forces, so wake each capsule before tossing it
+    const shake = () => {
+      ballBodiesRef.current.forEach(({ body }) => {
+        if (body.isSleeping) Matter.Sleeping.set(body, false);
+        Matter.Body.applyForce(body, body.position, {
+          x: (Math.random() - 0.5) * 0.06,
+          y: -0.045 - Math.random() * 0.035,
+        });
+        Matter.Body.setAngularVelocity(body, (Math.random() - 0.5) * 0.3);
+      });
+    };
+
+    shake();
+    drawIntervalsRef.current.push(window.setInterval(shake, SHAKE_INTERVAL_MS));
+
+    // Suspense: flick the highlight ring between random capsules
+    drawIntervalsRef.current.push(
+      window.setInterval(() => {
+        const keys = Array.from(ballBodiesRef.current.keys());
+        drawStateRef.current.highlightKey =
+          keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : null;
+      }, HIGHLIGHT_CYCLE_MS)
+    );
+
+    drawTimeoutsRef.current.push(
+      window.setTimeout(() => {
+        drawIntervalsRef.current.forEach((t) => window.clearInterval(t));
+        drawIntervalsRef.current = [];
+
+        // Pick from the bodies (not the wishes array) so the winner always has
+        // something to animate, and snapshot the wish before the next poll
+        // replaces the array underneath us.
+        const keys = Array.from(ballBodiesRef.current.keys());
+        const winnerKey = keys[Math.floor(Math.random() * keys.length)];
+        const entry = winnerKey ? ballBodiesRef.current.get(winnerKey) : undefined;
+
+        if (!entry) {
+          cancelDraw();
+          setDrawPhase('idle');
+          return;
+        }
+
+        const winner = entry.meta.wish;
+
+        drawStateRef.current = {
+          phase: 'spotlight',
+          winnerKey,
+          highlightKey: winnerKey,
+          startedAt: performance.now(),
+        };
+        setDrawPhase('spotlight');
+        setWinnerWish(winner);
+
+        // Let the winning capsule rise free of the pile
+        entry.body.isSensor = true;
+        Matter.Sleeping.set(entry.body, false);
+        Matter.Body.setVelocity(entry.body, { x: 0, y: 0 });
+        Matter.Body.setAngularVelocity(entry.body, 0);
+
+        drawTimeoutsRef.current.push(
+          window.setTimeout(() => {
+            cancelDraw();
+            setDrawPhase('idle');
+            onSelectWishRef.current(winner);
+          }, SPOTLIGHT_MS)
+        );
+      }, CHURN_MS)
+    );
+  }, [cancelDraw]);
 
   // Compute container boundaries inside the glass box
   const getGlassBounds = useCallback((width: number, height: number) => {
@@ -427,13 +563,71 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
       ctx.restore();
 
       // --- 2. Draw Wish Balls (Hardware-accelerated pre-cached capsule sprites) ---
-      ballBodiesRef.current.forEach(({ body, meta }) => {
+      const draw = drawStateRef.current;
+      const now = performance.now();
+      const isSpotlight = draw.phase === 'spotlight' && !!draw.winnerKey;
+      const winnerEntry = draw.winnerKey ? ballBodiesRef.current.get(draw.winnerKey) : undefined;
+
+      // Float the winning capsule up to the centre of the chamber
+      if (isSpotlight && winnerEntry) {
+        const rise = Math.min(1, (now - draw.startedAt) / WINNER_RISE_MS);
+        const ease = 1 - Math.pow(1 - rise, 3);
+        const targetX = (b.left + b.right) / 2;
+        const targetY = b.top + b.boxHeight * 0.36;
+        const pos = winnerEntry.body.position;
+        Matter.Body.setPosition(winnerEntry.body, {
+          x: pos.x + (targetX - pos.x) * (0.05 + 0.13 * ease),
+          y: pos.y + (targetY - pos.y) * (0.05 + 0.13 * ease),
+        });
+        Matter.Body.setVelocity(winnerEntry.body, { x: 0, y: 0 });
+        Matter.Body.setAngle(winnerEntry.body, winnerEntry.body.angle + 0.035);
+        if (winnerEntry.body.isSleeping) Matter.Sleeping.set(winnerEntry.body, false);
+      }
+
+      const drawCapsule = (
+        body: Matter.Body,
+        meta: BallMeta,
+        opts: { alpha: number; scale: number; halo: number; ring: string | null }
+      ) => {
         const { x, y } = body.position;
         const radius = meta.radius;
         const sprite = getCapsuleSprite(meta.color, radius);
 
         ctx.save();
+        ctx.globalAlpha = opts.alpha;
         ctx.translate(x, y);
+
+        // Radiant winner halo (drawn unrotated so it stays a steady glow)
+        if (opts.halo > 0) {
+          const haloR = radius * (2.2 + opts.halo * 0.9);
+          const haloGrad = ctx.createRadialGradient(0, 0, radius * 0.7, 0, 0, haloR);
+          haloGrad.addColorStop(0, `rgba(253, 224, 71, ${0.55 * opts.halo})`);
+          haloGrad.addColorStop(0.55, `rgba(251, 113, 133, ${0.28 * opts.halo})`);
+          haloGrad.addColorStop(1, 'rgba(251, 113, 133, 0)');
+          ctx.beginPath();
+          ctx.arc(0, 0, haloR, 0, Math.PI * 2);
+          ctx.fillStyle = haloGrad;
+          ctx.fill();
+
+          // Pulsing sparkle rays
+          ctx.save();
+          ctx.rotate((now / 1400) % (Math.PI * 2));
+          ctx.strokeStyle = `rgba(253, 224, 71, ${0.5 * opts.halo})`;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 12; i += 1) {
+            const a = (i / 12) * Math.PI * 2;
+            const inner = radius * 1.35 * opts.scale;
+            const outer = inner + radius * (0.35 + 0.25 * Math.sin(now / 180 + i));
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+            ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        ctx.scale(opts.scale, opts.scale);
+        ctx.save();
         ctx.rotate(body.angle);
 
         // Blit pre-cached capsule sprite
@@ -467,6 +661,29 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
         ctx.restore();
 
         ctx.restore();
+
+        // Selection ring (suspense highlight / locked winner), unrotated
+        if (opts.ring) {
+          ctx.beginPath();
+          ctx.arc(0, 0, radius * 1.22, 0, Math.PI * 2);
+          ctx.strokeStyle = opts.ring;
+          ctx.lineWidth = 4;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      };
+
+      // Everyone but the winner
+      ballBodiesRef.current.forEach(({ body, meta }, key) => {
+        if (isSpotlight && key === draw.winnerKey) return;
+        const highlighted = draw.phase === 'churn' && key === draw.highlightKey;
+        drawCapsule(body, meta, {
+          alpha: 1,
+          scale: 1,
+          halo: 0,
+          ring: highlighted ? 'rgba(251, 191, 36, 0.95)' : null,
+        });
       });
 
       // --- 3. Draw Crystal Glass Reflection & Metallic Rim Overlays ---
@@ -540,6 +757,42 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
 
       ctx.restore();
 
+      // --- 4. Spotlight: dim the chamber, then stage the winning capsule above
+      // the glass overlays (drawing it before them turned the specular
+      // streaks into grey smears across the darkened chamber).
+      // Dim the chamber behind the winner, then draw it on top
+      if (isSpotlight && winnerEntry) {
+        const fade = Math.min(1, (now - draw.startedAt) / 450);
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(b.left, b.top, b.boxWidth, b.boxHeight, [32, 32, 18, 18]);
+        ctx.clip();
+        ctx.fillStyle = `rgba(15, 23, 42, ${0.5 * fade})`;
+        ctx.fillRect(b.left, b.top, b.boxWidth, b.boxHeight);
+
+        // Warm stage beam from the drop chute down onto the winner
+        const beam = ctx.createLinearGradient(0, b.top, 0, winnerEntry.body.position.y + 40);
+        beam.addColorStop(0, `rgba(253, 224, 71, ${0.3 * fade})`);
+        beam.addColorStop(1, 'rgba(253, 224, 71, 0)');
+        ctx.beginPath();
+        ctx.moveTo((b.left + b.right) / 2 - 40, b.top);
+        ctx.lineTo((b.left + b.right) / 2 + 40, b.top);
+        ctx.lineTo(winnerEntry.body.position.x + 150, winnerEntry.body.position.y + 40);
+        ctx.lineTo(winnerEntry.body.position.x - 150, winnerEntry.body.position.y + 40);
+        ctx.closePath();
+        ctx.fillStyle = beam;
+        ctx.fill();
+        ctx.restore();
+
+        const pop = Math.min(1, (now - draw.startedAt) / WINNER_RISE_MS);
+        drawCapsule(winnerEntry.body, winnerEntry.meta, {
+          alpha: 1,
+          scale: 1 + 0.75 * (1 - Math.pow(1 - pop, 3)),
+          halo: fade,
+          ring: 'rgba(253, 224, 71, 0.95)',
+        });
+      }
+
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -547,6 +800,9 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
 
     // Click/Tap handling on wish balls
     const handleCanvasClick = (e: MouseEvent | TouchEvent) => {
+      // The draw owns the stage while it runs
+      if (drawStateRef.current.phase !== 'idle') return;
+
       const rect = canvas.getBoundingClientRect();
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
       const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
@@ -586,11 +842,16 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
     return () => {
       canvas.removeEventListener('click', handleCanvasClick);
       cancelAnimationFrame(animationFrameId);
+      cancelDraw();
+      setDrawPhase('idle');
       if (runnerRef.current) Runner.stop(runnerRef.current);
       if (engineRef.current) World.clear(engineRef.current.world, false);
       ballBodiesRef.current.clear();
     };
-  }, [dimensions.width, dimensions.height, getGlassBounds, syncWishes]);
+  }, [dimensions.width, dimensions.height, getGlassBounds, syncWishes, cancelDraw]);
+
+  // Never leave timers running behind an unmounted display
+  useEffect(() => cancelDraw, [cancelDraw]);
 
   // Sync new incoming wishes incrementally
   useEffect(() => {
@@ -600,11 +861,87 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
   }, [wishes, syncWishes, dimensions]);
 
   const bounds = getGlassBounds(dimensions.width || 800, dimensions.height || 600);
+  const isDrawing = drawPhase !== 'idle';
 
   return (
     <div ref={containerRef} className="relative w-full h-full overflow-hidden flex items-center justify-center">
       {/* 2D Physics Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full cursor-pointer z-10" />
+
+      {/* Interactive Layer: the turn dial lives above the canvas (z-10) so it can be clicked */}
+      {dimensions.width > 0 && (
+        <div
+          className="absolute pointer-events-none z-20"
+          style={{
+            left: `${bounds.left - 36}px`,
+            top: `${bounds.top - 68}px`,
+            width: `${bounds.boxWidth + 72}px`,
+            height: `${bounds.boxHeight + 168}px`,
+          }}
+        >
+          <div className="absolute bottom-0 inset-x-0 h-28 flex items-center justify-center">
+            {/* `relative` + an absolutely placed label keeps the knob itself dead centre
+                on the pedestal, whatever the label text is */}
+            <div className="relative flex items-center">
+              <div className="absolute right-full mr-4 flex flex-col items-end whitespace-nowrap">
+                <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">
+                  LUCKY DRAW
+                </span>
+                <span className="text-[10px] text-slate-400 font-medium">
+                  {isDrawing ? 'กำลังสุ่มลูกบอล...' : 'หมุนสุ่มรับพร'}
+                </span>
+              </div>
+
+            <button
+              type="button"
+              onClick={startLuckyDraw}
+              disabled={isDrawing || wishes.length === 0}
+              title={wishes.length === 0 ? 'ยังไม่มีคำอวยพรให้สุ่ม' : 'หมุนสุ่มคำอวยพร'}
+              aria-label="หมุนสุ่มคำอวยพร"
+              className={`pointer-events-auto relative w-24 h-24 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-100 border-4 border-amber-600 shadow-[0_10px_24px_rgba(217,119,6,0.45)] flex items-center justify-center transition-transform duration-300 ${
+                wishes.length === 0
+                  ? 'opacity-50 cursor-not-allowed'
+                  : isDrawing
+                    ? 'cursor-wait animate-spin'
+                    : 'cursor-pointer hover:rotate-45 hover:scale-105 active:scale-95'
+              }`}
+            >
+              {/* Outer knurled dial ring */}
+              <div className="absolute inset-2 rounded-full border-2 border-dashed border-amber-700/40" />
+              {/* Center 3D Rotary Knob Handle */}
+              <div className="w-7 h-16 bg-gradient-to-b from-rose-800 via-rose-600 to-rose-900 rounded-full shadow-lg border-2 border-rose-950/30 flex items-center justify-center">
+                <div className="w-1.5 h-9 bg-amber-300/80 rounded-full" />
+              </div>
+            </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draw status banner over the glass chamber */}
+      {isDrawing && dimensions.width > 0 && (
+        <div
+          className="absolute z-20 pointer-events-none flex justify-center"
+          style={{ left: `${bounds.left}px`, width: `${bounds.boxWidth}px`, top: `${bounds.top + 18}px` }}
+        >
+          <div className="px-6 py-2.5 rounded-full bg-rose-950/75 backdrop-blur-md border border-amber-300/70 shadow-2xl text-center">
+            {drawPhase === 'churn' ? (
+              <span className="text-sm font-serif font-bold text-amber-200 tracking-widest">
+                ✦ กำลังสุ่มลูกบอลคำอวยพร ✦
+              </span>
+            ) : (
+              <>
+                <div className="text-sm font-serif font-bold text-amber-200 tracking-widest">
+                  ✦ ลูกบอลนำโชค #{winnerWish?.id} ✦
+                </div>
+                <div className="text-[11px] text-rose-100/90 font-medium mt-0.5">
+                  คำอวยพรจาก {winnerWish?.guestName || 'ผู้ร่วมงาน'}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Decorative Gachapon Machine Structure Backdrop & Frame */}
       {dimensions.width > 0 && (
@@ -683,7 +1020,12 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
               </div>
             </div>
 
-            {/* Center: Recessed Capsule Dispenser Chute / Collection Pocket */}
+            {/* Center: spacer reserving room for the turn dial, which is rendered in the
+                overlay above the canvas so it can receive clicks. Keep this width in sync
+                with the dial's size, or the pedestal's neighbours will crowd it. */}
+            <div className="w-28 h-24" />
+
+            {/* Right: Recessed Capsule Dispenser Chute / Collection Pocket */}
             <div className="flex flex-col items-center">
               <div className="w-36 h-14 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-950 rounded-t-2xl border-2 border-rose-300/80 shadow-inner flex flex-col items-center justify-end pb-1.5 overflow-hidden relative">
                 {/* Soft Interior Gold Glow from inside the dispenser */}
@@ -692,24 +1034,6 @@ export default function GachaponBox({ wishes, onSelectWish }: GachaponBoxProps) 
                 <span className="text-[9px] font-bold text-amber-200/80 tracking-widest uppercase mt-0.5">
                   DISPENSER
                 </span>
-              </div>
-            </div>
-
-            {/* Right: Authentic 3D Brass/Gold Rotary Turn Dial */}
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-end mr-1">
-                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                  TURN DIAL
-                </span>
-                <span className="text-[9px] text-slate-400 font-medium">หมุนสุ่มรับพร</span>
-              </div>
-              <div className="relative w-14 h-14 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-yellow-100 border-2 border-amber-600 shadow-[0_6px_14px_rgba(217,119,6,0.35)] flex items-center justify-center cursor-pointer hover:rotate-45 transition-transform duration-300">
-                {/* Outer knurled dial ring */}
-                <div className="absolute inset-1 rounded-full border border-dashed border-amber-700/40" />
-                {/* Center 3D Rotary Knob Handle */}
-                <div className="w-4 h-9 bg-gradient-to-b from-rose-800 via-rose-600 to-rose-900 rounded-full shadow-md border border-rose-950/30 flex items-center justify-center">
-                  <div className="w-1 h-5 bg-amber-300/80 rounded-full" />
-                </div>
               </div>
             </div>
           </div>
