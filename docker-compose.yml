@@ -58,6 +58,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: "http://backend:5000"
     container_name: wedding-frontend
     restart: unless-stopped
     ports:

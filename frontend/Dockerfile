@@ -14,6 +14,12 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Backend target for the /api and /socket.io rewrites in next.config.mjs.
+# Rewrites are baked in at build time, so this must be set here (not at runtime).
+# Default is the k3s Service; docker-compose overrides it with http://backend:5000.
+ARG NEXT_PUBLIC_BACKEND_URL=http://backend-service:5000
+ENV NEXT_PUBLIC_BACKEND_URL=$NEXT_PUBLIC_BACKEND_URL
+
 # Set environment variables for standalone build if needed
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
