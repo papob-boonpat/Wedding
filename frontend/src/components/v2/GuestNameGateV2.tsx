@@ -11,7 +11,7 @@ export default function GuestNameGateV2() {
   const [confirmedName, setConfirmedName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<boolean>(false);
   // Language lives here so it survives the gate -> canvas -> gate cycle
-  const [lang, setLang] = useState<Lang>('th');
+  const [lang, setLang] = useState<Lang>('en');
 
   const t = STRINGS[lang];
   const toggleLang = () => setLang((prev) => (prev === 'th' ? 'en' : 'th'));

@@ -1,9 +1,9 @@
 import GuestNameGateV2 from '@/components/v2/GuestNameGateV2';
 
 export const metadata = {
-  title: 'สมุดอวยพร | Wedding Guestbook',
+  title: 'Wedding Guestbook | สมุดอวยพร',
   description:
-    'ร่วมเขียนคำอวยพรแสดงความยินดีแด่คู่บ่าวสาวในวันสำคัญ — Write a wish for the newlyweds',
+    'Write a wish for the newlyweds — ร่วมเขียนคำอวยพรแสดงความยินดีแด่คู่บ่าวสาวในวันสำคัญ',
 };
 
 export default function GuestV2Page() {
