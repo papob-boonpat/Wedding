@@ -19,6 +19,12 @@ export interface Strings {
   submitError: string;
   // Input mode toggle
   inputModeLabel: string;
+  // Draw vs type mode
+  writeModeLabel: string;
+  drawMode: string;
+  typeMode: string;
+  typePlaceholder: string;
+  typeHint: string;
   stylusMode: string;
   fingerMode: string;
   fingerHint: string;
@@ -46,6 +52,11 @@ export const STRINGS: Record<Lang, Strings> = {
     successToast: 'ส่งคำอวยพรลงตู้กาชาปองเรียบร้อยแล้ว ขอบคุณมากครับ/ค่ะ! ✨',
     submitError: 'ไม่สามารถส่งคำอวยพรได้ กรุณาตรวจสอบการเชื่อมต่อเครือข่าย',
     inputModeLabel: 'โหมดการเขียน',
+    writeModeLabel: 'วิธีเขียนคำอวยพร',
+    drawMode: 'วาด',
+    typeMode: 'พิมพ์',
+    typePlaceholder: 'พิมพ์คำอวยพรของคุณ...',
+    typeHint: 'พิมพ์ข้อความ แล้วคำอวยพรจะปรากฏบนกระดาษด้านบน',
     stylusMode: 'ปากกา',
     fingerMode: 'นิ้วมือ',
     fingerHint: 'โหมดนิ้วมือ: วางมือบนหน้าจอน้อยที่สุดเพื่อไม่ให้เกิดเส้นที่ไม่ต้องการ',
@@ -77,6 +88,11 @@ export const STRINGS: Record<Lang, Strings> = {
     successToast: 'Your wish is safely in the gachapon machine. Thank you! ✨',
     submitError: 'Could not send your wish. Please check your network connection.',
     inputModeLabel: 'Drawing mode',
+    writeModeLabel: 'How to write your wish',
+    drawMode: 'Draw',
+    typeMode: 'Type',
+    typePlaceholder: 'Type your wish...',
+    typeHint: 'Type your message and it will appear on the paper above',
     stylusMode: 'Stylus',
     fingerMode: 'Finger',
     fingerHint: 'Finger mode: rest as little of your hand on the screen as you can to avoid stray marks',

@@ -11,6 +11,7 @@ import {
   Brush,
   PenTool,
   Hand,
+  Type,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getBackendUrl } from '@/lib/socket';
@@ -41,6 +42,90 @@ const CAPSULE_COLORS = [
 ];
 
 const PEN_SIZES = [{ value: 3 }, { value: 6 }, { value: 12 }];
+
+const TEXT_FONT_STACK = 'Georgia, "Times New Roman", serif';
+const TEXT_MAX_FONT = 72;
+const TEXT_MIN_FONT = 18;
+
+/**
+ * Split a paragraph into wrappable tokens. Thai has no spaces, so fall back to
+ * Intl.Segmenter word boundaries when the browser supports them.
+ */
+const segmentTokens = (line: string): string[] => {
+  const Segmenter = (Intl as any).Segmenter;
+  if (typeof Segmenter === 'function') {
+    try {
+      const seg = new Segmenter(['th', 'en'], { granularity: 'word' });
+      const parts: string[] = [];
+      for (const { segment } of seg.segment(line)) parts.push(segment);
+      if (parts.length) return parts;
+    } catch {
+      // fall through to whitespace splitting
+    }
+  }
+  return line.split(/(\s+)/).filter((part) => part.length > 0);
+};
+
+/** Break a single token that is wider than the line box, character by character. */
+const breakLongToken = (
+  ctx: CanvasRenderingContext2D,
+  token: string,
+  maxWidth: number,
+): string[] => {
+  const out: string[] = [];
+  let buf = '';
+  for (const char of Array.from(token)) {
+    if (buf && ctx.measureText(buf + char).width > maxWidth) {
+      out.push(buf);
+      buf = char;
+    } else {
+      buf += char;
+    }
+  }
+  if (buf) out.push(buf);
+  return out;
+};
+
+/** Lay a paragraph out into lines that fit maxWidth, honouring explicit newlines. */
+const wrapText = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] => {
+  const lines: string[] = [];
+
+  for (const paragraph of text.split('\n')) {
+    if (!paragraph.trim()) {
+      lines.push('');
+      continue;
+    }
+
+    // Pre-split any token too wide to ever fit, so the greedy pass below only
+    // ever deals with tokens that fit on a line of their own
+    const tokens: string[] = [];
+    for (const token of segmentTokens(paragraph)) {
+      if (ctx.measureText(token).width > maxWidth) {
+        tokens.push(...breakLongToken(ctx, token, maxWidth));
+      } else {
+        tokens.push(token);
+      }
+    }
+
+    let current = '';
+    for (const token of tokens) {
+      const candidate = current + token;
+      if (current && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(current.trimEnd());
+        current = token.trimStart();
+      } else {
+        current = candidate;
+      }
+    }
+    lines.push(current.trimEnd());
+  }
+
+  return lines;
+};
 
 interface CanvasV2Props {
   /** Name collected by the gate before this page is shown */
@@ -76,6 +161,13 @@ export default function CanvasV2({
   const [guestName, setGuestName] = useState<string>(initialGuestName);
   // Input mode: stylus/mouse only by default, finger drawing opt-in
   const [allowFinger, setAllowFinger] = useState<boolean>(false);
+  // Write mode: freehand drawing, or typed text rendered onto the same canvas
+  const [writeMode, setWriteMode] = useState<'draw' | 'type'>('draw');
+  const [typedText, setTypedText] = useState<string>('');
+  // redrawAll() is captured by resizeCanvas's empty-dep callback, so the text it
+  // paints has to come from a ref rather than from state
+  const typedTextRef = useRef<string>('');
+  const selectedColorRef = useRef<string>(selectedColor);
   // const [touchRejectedNotice, setTouchRejectedNotice] = useState<boolean>(false);
 
   // Morphing animation state
@@ -117,6 +209,65 @@ export default function CanvasV2({
       window.removeEventListener('orientationchange', resizeCanvas);
     };
   }, [resizeCanvas]);
+
+  // Drawing is immediate-mode, so typed text only lands on the canvas if we
+  // replay the scene whenever it (or its colour) changes
+  useEffect(() => {
+    typedTextRef.current = typedText;
+    selectedColorRef.current = selectedColor;
+    redrawAll();
+  }, [typedText, selectedColor]);
+
+  // The first paint can land before the serif face is ready
+  useEffect(() => {
+    if (typeof document === 'undefined' || !document.fonts) return;
+    document.fonts.ready.then(() => redrawAll());
+  }, []);
+
+  const hasTypedText = typedText.trim().length > 0;
+  const hasAnyContent = hasContent || hasTypedText;
+
+  // Paint the typed wish onto the canvas so the export picks it up for free.
+  // The box is recomputed from the live rect each redraw so it reflows when the
+  // soft keyboard resizes the viewport, and it keeps clear of the name tag that
+  // handleSubmit stamps into the bottom-right corner.
+  const drawTypedText = (ctx: CanvasRenderingContext2D, rect: DOMRect) => {
+    const text = typedTextRef.current.trim();
+    if (!text) return;
+
+    const boxX = rect.width * 0.1;
+    const boxW = rect.width * 0.8;
+    const boxY = rect.height * 0.1;
+    const boxH = rect.height * 0.8 - 56;
+    if (boxW <= 0 || boxH <= 0) return;
+
+    // Shrink to fit: the whole wish should be readable without scrolling
+    let fontSize = TEXT_MAX_FONT;
+    let lines: string[] = [];
+    while (fontSize > TEXT_MIN_FONT) {
+      ctx.font = `500 ${fontSize}px ${TEXT_FONT_STACK}`;
+      lines = wrapText(ctx, text, boxW);
+      if (lines.length * fontSize * 1.45 <= boxH) break;
+      fontSize -= 2;
+    }
+    ctx.font = `500 ${fontSize}px ${TEXT_FONT_STACK}`;
+    if (!lines.length) lines = wrapText(ctx, text, boxW);
+
+    const lineHeight = fontSize * 1.45;
+    const blockH = lines.length * lineHeight;
+
+    ctx.save();
+    ctx.fillStyle = selectedColorRef.current;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const centerX = boxX + boxW / 2;
+    let y = boxY + Math.max(0, (boxH - blockH) / 2) + lineHeight / 2;
+    for (const line of lines) {
+      ctx.fillText(line, centerX, y);
+      y += lineHeight;
+    }
+    ctx.restore();
+  };
 
   // Redraw all strokes from memory with smooth continuous curves
   const redrawAll = () => {
@@ -168,6 +319,8 @@ export default function CanvasV2({
       ctx.stroke();
       ctx.restore();
     }
+
+    drawTypedText(ctx, rect);
   };
 
   // Pointer Event Handlers (Stylus + Mouse Only, Reject Finger Touch)
@@ -324,6 +477,8 @@ export default function CanvasV2({
     lastPointRef.current = null;
     lastMidPointRef.current = null;
     setHasContent(false);
+    typedTextRef.current = '';
+    setTypedText('');
   };
 
   // Undo Last Stroke
@@ -339,7 +494,7 @@ export default function CanvasV2({
   // Submit and morph into capsule ball with instant snappy launch
   const handleSubmit = async () => {
     const canvas = canvasRef.current;
-    if (!canvas || !hasContent || isSubmitting || !guestName.trim()) return;
+    if (!canvas || !hasAnyContent || isSubmitting || !guestName.trim()) return;
 
     try {
       setIsSubmitting(true);
@@ -473,29 +628,55 @@ export default function CanvasV2({
 
         {/* Input Mode + Language Toggles */}
         <div className="flex items-center gap-2">
+          {/* Draw vs type */}
           <div
             className="flex items-center gap-1 p-1 rounded-full bg-slate-100 border border-slate-200 shadow-sm"
-            title={t.inputModeLabel}
+            title={t.writeModeLabel}
           >
             <button
-              onClick={() => setAllowFinger(false)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                !allowFinger ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => setWriteMode('draw')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${writeMode === 'draw' ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
-              <PenTool className="w-3.5 h-3.5" />
-              <span>{t.stylusMode}</span>
+              <Brush className="w-3.5 h-3.5" />
+              <span>{t.drawMode}</span>
             </button>
             <button
-              onClick={() => setAllowFinger(true)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                allowFinger ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => {
+                setWriteMode('type');
+                setIsEraser(false);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${writeMode === 'type' ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
-              <Hand className="w-3.5 h-3.5" />
-              <span>{t.fingerMode}</span>
+              <Type className="w-3.5 h-3.5" />
+              <span>{t.typeMode}</span>
             </button>
           </div>
+
+          {writeMode === 'draw' && (
+            <div
+              className="flex items-center gap-1 p-1 rounded-full bg-slate-100 border border-slate-200 shadow-sm"
+              title={t.inputModeLabel}
+            >
+              <button
+                onClick={() => setAllowFinger(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${!allowFinger ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+              >
+                <PenTool className="w-3.5 h-3.5" />
+                <span>{t.stylusMode}</span>
+              </button>
+              <button
+                onClick={() => setAllowFinger(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${allowFinger ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+              >
+                <Hand className="w-3.5 h-3.5" />
+                <span>{t.fingerMode}</span>
+              </button>
+            </div>
+          )}
 
           <button
             onClick={onToggleLang}
@@ -518,7 +699,7 @@ export default function CanvasV2({
 
           <button
             onClick={handleClear}
-            disabled={!hasContent || isSubmitting}
+            disabled={!hasAnyContent || isSubmitting}
             className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 disabled:opacity-40 disabled:pointer-events-none border border-slate-200 shadow-sm transition-all active:scale-95 text-sm font-medium"
           >
             <Eraser className="w-4 h-4 text-rose-500" />
@@ -527,7 +708,7 @@ export default function CanvasV2({
 
           <button
             onClick={handleSubmit}
-            disabled={!hasContent || isSubmitting || !guestName.trim()}
+            disabled={!hasAnyContent || isSubmitting || !guestName.trim()}
             className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-gradient-to-r from-rose-500 via-pink-500 to-rose-600 hover:from-rose-600 hover:to-pink-600 text-white font-semibold text-sm shadow-md shadow-rose-500/30 disabled:opacity-40 disabled:pointer-events-none transition-all transform active:scale-95"
           >
             {isSubmitting ? (
@@ -564,17 +745,20 @@ export default function CanvasV2({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
-          className="drawing-canvas absolute inset-0 w-full h-full cursor-crosshair z-10"
+          className={`drawing-canvas absolute inset-0 w-full h-full z-10 ${writeMode === 'type' ? 'pointer-events-none' : 'cursor-crosshair'
+            }`}
         />
 
         {/* Empty Placeholder Helper */}
-        {!hasContent && !animatingSnapshot && (
+        {!hasAnyContent && !animatingSnapshot && (
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-0 text-slate-400 opacity-60">
             <div className="p-6 rounded-full border border-dashed border-rose-200 mb-4 animate-bounce">
               <Brush className="w-10 h-10 text-rose-400" />
             </div>
-            <p className="text-lg font-serif text-slate-600">{t.emptyPrompt}</p>
-            {allowFinger && (
+            <p className="text-lg font-serif text-slate-600">
+              {writeMode === 'type' ? t.typeHint : t.emptyPrompt}
+            </p>
+            {writeMode === 'draw' && allowFinger && (
               <p className="mt-2 max-w-sm px-6 text-center text-xs font-medium text-rose-500">
                 {t.fingerHint}
               </p>
@@ -761,6 +945,23 @@ export default function CanvasV2({
           )}
         </AnimatePresence>
 
+        {/* Typed Wish Composer — the canvas above is the single source of truth,
+            this is just the keyboard entry point */}
+        {writeMode === 'type' && !animatingSnapshot && (
+          <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 w-[min(44rem,92vw)] px-1">
+            <textarea
+              autoFocus
+              rows={2}
+              maxLength={400}
+              value={typedText}
+              onChange={(e) => setTypedText(e.target.value)}
+              disabled={isSubmitting}
+              placeholder={t.typePlaceholder}
+              className="touch-auto select-text w-full resize-none px-5 py-3 text-base leading-relaxed bg-white/95 backdrop-blur-xl text-slate-800 placeholder-slate-400 rounded-3xl border border-rose-200/80 shadow-2xl focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400 transition-all"
+            />
+          </div>
+        )}
+
         {/* Floating Tool Palette (Bottom Center, Light Theme) */}
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 flex items-center gap-4 px-5 py-3 rounded-full bg-white/95 backdrop-blur-xl border border-rose-200/80 shadow-2xl">
           {/* Color Swatches */}
@@ -782,40 +983,44 @@ export default function CanvasV2({
             ))}
           </div>
 
-          <div className="h-6 w-px bg-slate-200" />
+          {writeMode === 'draw' && (
+            <>
+              <div className="h-6 w-px bg-slate-200" />
 
-          {/* Stroke Sizes */}
-          <div className="flex items-center gap-2">
-            {PEN_SIZES.map((size) => (
+              {/* Stroke Sizes */}
+              <div className="flex items-center gap-2">
+                {PEN_SIZES.map((size) => (
+                  <button
+                    key={size.value}
+                    onClick={() => {
+                      setSelectedSize(size.value);
+                      setIsEraser(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedSize === size.value && !isEraser
+                      ? 'bg-rose-500 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                      }`}
+                  >
+                    {t.penSizes[size.value]}
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-6 w-px bg-slate-200" />
+
+              {/* Eraser Tool */}
               <button
-                key={size.value}
-                onClick={() => {
-                  setSelectedSize(size.value);
-                  setIsEraser(false);
-                }}
-                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${selectedSize === size.value && !isEraser
-                  ? 'bg-rose-500 text-white shadow-md'
+                onClick={() => setIsEraser(!isEraser)}
+                className={`p-2 rounded-full transition-all ${isEraser
+                  ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
                   : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
                   }`}
+                title={t.eraser}
               >
-                {t.penSizes[size.value]}
+                <Eraser className="w-4 h-4" />
               </button>
-            ))}
-          </div>
-
-          <div className="h-6 w-px bg-slate-200" />
-
-          {/* Eraser Tool */}
-          <button
-            onClick={() => setIsEraser(!isEraser)}
-            className={`p-2 rounded-full transition-all ${isEraser
-              ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
-              : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-              }`}
-            title={t.eraser}
-          >
-            <Eraser className="w-4 h-4" />
-          </button>
+            </>
+          )}
         </div>
       </main>
 
